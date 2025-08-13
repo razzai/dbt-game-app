@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DBT Skills Compass</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, onSnapshot, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Firebase configuration from the environment
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        // Initialize Firebase
+        let app;
+        let db;
+        let auth;
+        let userId;
+        let isAuthReady = false;
+        let gameData = {
+            points: 0,
+            totalPointsScored: 0, // Track total points scored
+            rewards: [],
+            sessions: []
+        };
+
+        const initFirebase = async () => {
+            try {
+                if (Object.keys(firebaseConfig).length > 0) {
+                    app = initializeApp(firebaseConfig);
+                    auth = getAuth(app);
+                    db = getFirestore(app);
+
+                    // Sign in with custom token or anonymously
+                    if (initialAuthToken) {
+                        await signInWithCustomToken(auth, initialAuthToken);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+                } else {
+                    console.error("Firebase config is not available. Running in a limited local mode.");
+                    isAuthReady = true;
+                    // Proceed without Firestore.
+                }
+            } catch (error) {
+                console.error("Firebase initialization failed:", error);
+                isAuthReady = true;
+                // Proceed without Firestore.
+            }
+        };
+
+        const saveData = async () => {
+            if (!isAuthReady || !db || !userId) {
+                console.error("Cannot save data: Firebase not ready or user not authenticated.");
+                return;
+            }
+            try {
+                const userDocRef = doc(db, `/artifacts/${appId}/users/${userId}/dbt-game-data/progress`);
+                await setDoc(userDocRef, gameData);
+            } catch (e) {
+                console.error("Error saving document: ", e);
+            }
+        };
+
+        const setupDataListener = (uid) => {
+            if (!db) {
+                console.error("Firestore is not initialized.");
+                return;
+            }
+            userId = uid;
+            const userDocRef = doc(db, `/artifacts/${appId}/users/${userId}/dbt-game-data/progress`);
+            onSnapshot(userDocRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    gameData = docSnap.data();
+                    if (!gameData.sessions) {
+                        gameData.sessions = [];
+                    }
+                    if (gameData.totalPointsScored === undefined) {
+                        gameData.totalPointsScored = 0; // Initialize if it doesn't exist
+                    }
+                    updateUI();
+                } else {
+                    console.log("No user data found. Creating new data.");
+                    gameData = { points: 0, totalPointsScored: 0, rewards: [], sessions: [] };
+                    saveData();
+                }
+            }, (error) => {
+                console.error("Error listening to user data:", error);
+            });
+        };
+
+        // --- UI Rendering & Gamification Logic ---
+        const updateUI = () => {
+            document.getElementById('points-display').textContent = gameData.points;
+            document.getElementById('total-points-display').textContent = gameData.totalPointsScored;
+            const rewardsList = document.getElementById('rewards-list');
+            rewardsList.innerHTML = '';
+            gameData.rewards.forEach((reward, index) => {
+                const li = document.createElement('li');
+                const canRedeem = gameData.points >= reward.cost;
+                const redeemBtnClass = canRedeem ? 'bg-green-500 hover:bg-green-600' : 'bg-gray-400 cursor-not-allowed';
+                const redeemBtnDisabled = canRedeem ? '' : 'disabled';
+                li.className = 'flex justify-between items-center bg-white bg-opacity-20 backdrop-blur-sm rounded-lg p-2 mb-2';
+                li.innerHTML = `
+                    <span>${reward.text} <span class="text-sm font-semibold text-gray-700">(${reward.cost} pts)</span></span>
+                    <button data-index="${index}" class="redeem-btn px-3 py-1 text-white font-bold rounded-full transition-colors duration-200 ${redeemBtnClass}" ${redeemBtnDisabled}>Redeem</button>
+                `;
+                rewardsList.appendChild(li);
+            });
+            document.querySelectorAll('.redeem-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const index = parseInt(e.target.dataset.index);
+                    redeemReward(index);
+                });
+            });
+
+            renderAnalytics();
+        };
+
+        const addPoints = (points) => {
+            gameData.points += points;
+            gameData.totalPointsScored += points;
+            saveData();
+            showPointsToast(points);
+        };
+
+        const addReward = (rewardText, cost) => {
+            const parsedCost = parseInt(cost);
+            if (rewardText.trim() !== '' && !isNaN(parsedCost) && parsedCost >= 0) {
+                gameData.rewards.push({ text: rewardText, cost: parsedCost });
+                saveData();
+            } else {
+                createCustomAlert("Please enter a valid reward and a non-negative point cost.");
+            }
+        };
+
+        const redeemReward = (index) => {
+            const reward = gameData.rewards[index];
+            if (gameData.points >= reward.cost) {
+                gameData.points -= reward.cost;
+                // Reward is no longer removed, it stays in the list to be redeemed again
+                saveData();
+                showModal('You redeemed a reward!', `You just redeemed: "${reward.text}". Enjoy your moment of self-care!`);
+            } else {
+                createCustomAlert(`You need ${reward.cost} points to redeem "${reward.text}". You only have ${gameData.points} points.`);
+            }
+        };
+
+        // --- Session Tracking and Analytics ---
+        const logSession = (skillId, subSkillId, before, after) => {
+            const distressChange = before - after;
+            const pointsAwarded = distressChange > 0 ? 20 : 10;
+            gameData.sessions.push({
+                skill: skillId,
+                subSkill: subSkillId,
+                before: before,
+                after: after,
+                change: distressChange,
+                timestamp: Date.now()
+            });
+            addPoints(pointsAwarded);
+            saveData();
+            showModal('Session Saved!', `<p>You logged a session with **${skillsData[skillId].subSkills[subSkillId].name}**.</p>
+                                        <p>Distress changed from **${before}** to **${after}**. That's a change of **${distressChange}**!</p>
+                                        <p class="mt-4 font-bold text-green-700">You earned ${pointsAwarded} points!</p>`);
+        };
+
+        const renderAnalytics = () => {
+            const insightsContainer = document.getElementById('insights-list');
+            insightsContainer.innerHTML = '';
+
+            const skillSuccess = {};
+            gameData.sessions.forEach(session => {
+                if (!skillSuccess[session.skill]) {
+                    skillSuccess[session.skill] = { subSkills: {}, totalChange: 0, count: 0 };
+                }
+                if (!skillSuccess[session.skill].subSkills[session.subSkill]) {
+                    skillSuccess[session.skill].subSkills[session.subSkill] = { totalChange: 0, count: 0 };
+                }
+                skillSuccess[session.skill].totalChange += session.change;
+                skillSuccess[session.skill].count += 1;
+                skillSuccess[session.skill].subSkills[session.subSkill].totalChange += session.change;
+                skillSuccess[session.skill].subSkills[session.subSkill].count += 1;
+            });
+
+            for (const skillId in skillSuccess) {
+                const mainSkill = skillsData[skillId];
+                if (!mainSkill) continue;
+
+                const mainSkillAvg = (skillSuccess[skillId].totalChange / skillSuccess[skillId].count).toFixed(1);
+                const mainLi = document.createElement('li');
+                mainLi.className = 'bg-blue-50 bg-opacity-20 backdrop-blur-sm rounded-lg p-3 mb-2 font-bold text-blue-800';
+                mainLi.innerHTML = `
+                    <div class="flex justify-between items-center">
+                        <span class="text-xl">${mainSkill.title}</span>
+                        <span class="text-xl">Avg. Change: ${mainSkillAvg}</span>
+                    </div>
+                    <ul class="ml-4 mt-2 space-y-1"></ul>
+                `;
+                const subSkillsUl = mainLi.querySelector('ul');
+
+                for (const subSkillId in skillSuccess[skillId].subSkills) {
+                    const subSkillData = skillSuccess[skillId].subSkills[subSkillId];
+                    const subSkillName = skillsData[skillId].subSkills[subSkillId].name;
+                    const subSkillAvg = (subSkillData.totalChange / subSkillData.count).toFixed(1);
+                    const subLi = document.createElement('li');
+                    subLi.className = 'flex justify-between items-center text-gray-700 font-semibold';
+                    subLi.innerHTML = `
+                        <span>- ${subSkillName}</span>
+                        <span>Avg. Change: ${subSkillAvg}</span>
+                    `;
+                    subSkillsUl.appendChild(subLi);
+                }
+                insightsContainer.appendChild(mainLi);
+            }
+
+            if (Object.keys(skillSuccess).length === 0) {
+                 insightsContainer.innerHTML = '<p class="text-center text-gray-500">Log some sessions to see your insights here!</p>';
+            }
+        };
+
+        // --- UI Modal functions ---
+        const modal = document.getElementById('skill-modal');
+        const modalTitle = document.getElementById('modal-title');
+        const modalContent = document.getElementById('modal-content');
+        const closeBtn = document.getElementById('close-modal-btn');
+        let beforeRating = null;
+
+        const showModal = (title, content, skillId = null) => {
+            modalTitle.textContent = title;
+            modalContent.innerHTML = content;
+            modal.classList.remove('hidden');
+
+            if (skillId) {
+                renderSubSkills(skillId);
+            }
+        };
+
+        const renderSubSkills = (skillId) => {
+            const skill = skillsData[skillId];
+            if (!skill.subSkills) return;
+
+            const subSkillsHtml = Object.keys(skill.subSkills).map(subSkillId => `
+                <button class="sub-skill-btn bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-full transition-colors duration-200" data-skill-id="${skillId}" data-subskill-id="${subSkillId}">
+                    ${skill.subSkills[subSkillId].name}
+                </button>
+            `).join('');
+
+            modalContent.innerHTML += `<div class="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-4">${subSkillsHtml}</div>`;
+
+            modalContent.querySelectorAll('.sub-skill-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const selectedSkillId = e.target.dataset.skillId;
+                    const selectedSubSkillId = e.target.dataset.subskillId;
+                    promptBeforeRating(selectedSkillId, selectedSubSkillId);
+                });
+            });
+        };
+
+        const promptBeforeRating = (skillId, subSkillId) => {
+            modalTitle.textContent = "Before the Session";
+            modalContent.innerHTML = `
+                <p class="text-center mb-4 text-xl">On a scale of 1-10, how intense is your distress right now?</p>
+                <div class="flex flex-col items-center gap-4">
+                    <input type="number" id="before-rating" min="1" max="10" value="5" class="w-24 p-3 rounded-lg border-2 border-blue-300 text-center text-2xl focus:outline-none">
+                    <button id="record-before-btn" class="px-6 py-3 bg-blue-500 hover:bg-blue-600 text-white font-bold rounded-lg transition-colors duration-200">I've used the skill!</button>
+                </div>
+            `;
+            document.getElementById('record-before-btn').addEventListener('click', () => {
+                beforeRating = parseInt(document.getElementById('before-rating').value);
+                if (beforeRating >= 1 && beforeRating <= 10) {
+                    promptAfterRating(skillId, subSkillId);
+                } else {
+                    createCustomAlert("Please enter a valid number between 1 and 10.");
+                }
+            });
+        };
+
+        const promptAfterRating = (skillId, subSkillId) => {
+            modalTitle.textContent = "After the Session";
+            modalContent.innerHTML = `
+                <p class="text-center mb-4 text-xl">How intense is your distress now?</p>
+                <div class="flex flex-col items-center gap-4">
+                    <input type="number" id="after-rating" min="1" max="10" value="${beforeRating}" class="w-24 p-3 rounded-lg border-2 border-blue-300 text-center text-2xl focus:outline-none">
+                    <button id="record-after-btn" class="px-6 py-3 bg-green-500 hover:bg-green-600 text-white font-bold rounded-lg transition-colors duration-200">Save Session</button>
+                </div>
+            `;
+            document.getElementById('record-after-btn').addEventListener('click', () => {
+                const afterRating = parseInt(document.getElementById('after-rating').value);
+                if (afterRating >= 1 && afterRating <= 10) {
+                    logSession(skillId, subSkillId, beforeRating, afterRating);
+                    modal.classList.add('hidden');
+                } else {
+                    createCustomAlert("Please enter a valid number between 1 and 10.");
+                }
+            });
+        };
+
+        const showPointsToast = (points) => {
+            const toast = document.getElementById('points-toast');
+            toast.textContent = `+${points} Points! Good job!`;
+            toast.classList.remove('hidden');
+            toast.classList.add('animate-slide-in');
+            setTimeout(() => {
+                toast.classList.remove('animate-slide-in');
+                toast.classList.add('animate-slide-out');
+                setTimeout(() => toast.classList.add('hidden'), 500);
+            }, 2000);
+        };
+        
+        // Custom Alert/Dialog function instead of alert()
+        const createCustomAlert = (message) => {
+            const dialog = document.createElement('div');
+            dialog.className = 'fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900 bg-opacity-75';
+            dialog.innerHTML = `
+                <div class="bg-white rounded-lg p-6 shadow-xl max-w-sm w-full text-center">
+                    <p class="text-lg font-semibold mb-4">${message}</p>
+                    <button class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg" onclick="this.parentElement.parentElement.remove()">OK</button>
+                </div>
+            `;
+            document.body.appendChild(dialog);
+        };
+
+        closeBtn.addEventListener('click', () => modal.classList.add('hidden'));
+
+        // Core Skills content
+        const skillsData = {
+            mindfulness: {
+                title: 'Mindfulness',
+                content: `<p class="mb-4">Mindfulness is the practice of being fully aware of the present moment, without judgment. It's the foundation of all other DBT skills. Select the technique you used.</p>`,
+                subSkills: {
+                    observe: { name: 'Observe', description: 'Sit quietly and notice your breath. Just watch it go in and out.' },
+                    describe: { name: 'Describe', description: 'Describe your surroundings in your mind without judgment. "The sky is blue, the chair is brown."' },
+                    participate: { name: 'Participate', description: 'Throw yourself fully into an activity, like singing, dancing, or playing a game.' },
+                    mindfulWalking: { name: 'Mindful Walking', description: 'Pay attention to the feeling of your feet on the ground as you walk.' }
+                }
+            },
+            distressTolerance: {
+                title: 'Distress Tolerance',
+                content: `<p class="mb-4">These skills help you get through a difficult emotional crisis without making it worse. Use them when you can't solve the problem immediately. Select the technique you used.</p>`,
+                subSkills: {
+                    accepts: { name: 'ACCEPTS', description: 'A Distress Tolerance skill for distraction.' },
+                    tipp: { name: 'TIPP', description: 'A Distress Tolerance skill for rapid emotion regulation.' }
+                }
+            },
+            emotionRegulation: {
+                title: 'Emotion Regulation',
+                content: `<p class="mb-4">These skills help you understand your emotions, reduce emotional vulnerability, and manage your emotional responses. Select the technique you used.</p>`,
+                subSkills: {
+                    checkFacts: { name: 'Check the Facts', description: 'Look at the situation objectively to see if your emotion fits the facts.' },
+                    oppositeAction: { name: 'Opposite Action', description: 'If you feel like withdrawing, force yourself to engage in a social activity.' },
+                    accumulatePositive: { name: 'Accumulate Positive Emotions', description: 'Do things that make you feel good throughout the day.' },
+                    buildMastery: { name: 'Build Mastery', description: 'Do something that makes you feel competent and in control.' }
+                }
+            },
+            interpersonalEffectiveness: {
+                title: 'Interpersonal Effectiveness',
+                content: `<p class="mb-4">These skills help you get what you want, say no to unwanted requests, and maintain healthy relationships while keeping your self-respect. Select the technique you used.</p>`,
+                subSkills: {
+                    dearMan: { name: 'DEAR MAN', description: 'A mnemonic for asking for what you want (Describe, Express, Assert, Reinforce, Mindful, Appear Confident, Negotiate).' },
+                    give: { name: 'GIVE', description: 'Skills for maintaining relationships (Gentle, Interested, Validate, Easy manner).' },
+                    fast: { name: 'FAST', description: 'Skills for keeping your self-respect (Fair, Apologies-free, Stick to your values, Truthful).' }
+                }
+            },
+        };
+
+
+        document.addEventListener('DOMContentLoaded', () => {
+            // Event listeners for main skills
+            document.getElementById('mindfulness-btn').addEventListener('click', () => showModal(skillsData.mindfulness.title, skillsData.mindfulness.content, 'mindfulness'));
+            document.getElementById('distress-btn').addEventListener('click', () => showModal(skillsData.distressTolerance.title, skillsData.distressTolerance.content, 'distressTolerance'));
+            document.getElementById('emotion-btn').addEventListener('click', () => showModal(skillsData.emotionRegulation.title, skillsData.emotionRegulation.content, 'emotionRegulation'));
+            document.getElementById('interpersonal-btn').addEventListener('click', () => showModal(skillsData.interpersonalEffectiveness.title, skillsData.interpersonalEffectiveness.content, 'interpersonalEffectiveness'));
+
+            // Event listener for adding a custom reward
+            document.getElementById('add-reward-btn').addEventListener('click', () => {
+                const rewardInput = document.getElementById('new-reward-input');
+                const costInput = document.getElementById('new-reward-cost');
+                addReward(rewardInput.value, costInput.value);
+                rewardInput.value = '';
+                costInput.value = '';
+            });
+
+            // Authentication state listener and data initialization
+            if (Object.keys(firebaseConfig).length > 0) {
+                initFirebase().then(() => {
+                    onAuthStateChanged(auth, (user) => {
+                        isAuthReady = true;
+                        if (user) {
+                            console.log("User signed in:", user.uid);
+                            setupDataListener(user.uid);
+                            document.getElementById('user-id-display').textContent = `User ID: ${user.uid}`;
+                        } else {
+                            console.log("No user is signed in.");
+                            updateUI();
+                        }
+                    });
+                });
+            } else {
+                console.log("Running in local mode without Firebase persistence.");
+                isAuthReady = true;
+                document.getElementById('user-id-display').textContent = `User ID: Not Signed In (Local Mode)`;
+                updateUI();
+            }
+
+            // --- Updated Code for the Character and Affirmations ---
+            const character = document.getElementById('character');
+            const affirmationBubble = document.getElementById('affirmation-bubble');
+            const affirmations = [
+                "It's okay to need quiet time to recharge.",
+                "Your unique way of thinking is a superpower.",
+                "A special interest is a beautiful thing to have.",
+                "Sensory needs are valid and deserve to be met.",
+                "It's okay to stim. Your body is just trying to find comfort.",
+                "Executive dysfunction is a challenge, not a moral failing.",
+                "Your brain processes information differently, and that's wonderful."
+            ];
+
+            let x = Math.random() * (window.innerWidth - character.clientWidth);
+            let dx = 2; // Initial direction x
+            const speed = 2;
+
+            function moveCharacter() {
+                // Get window dimensions
+                const maxX = window.innerWidth - character.clientWidth;
+                
+                // Set fixed vertical position at the bottom of the screen
+                const bottomY = window.innerHeight - character.clientHeight - 20; // Add some padding from the bottom
+                character.style.top = `${bottomY}px`;
+
+                // Update horizontal position
+                x += dx * speed;
+
+                // Bounce off walls
+                if (x <= 0 || x >= maxX) {
+                    dx *= -1;
+                }
+
+                // Update character's CSS
+                character.style.left = `${x}px`;
+
+                // Update affirmation bubble's position
+                affirmationBubble.style.left = `${x + character.clientWidth / 2 - affirmationBubble.clientWidth / 2}px`;
+                affirmationBubble.style.top = `${bottomY - 70}px`; // Position above the character
+            }
+
+            function showAffirmation() {
+                // Hide any existing affirmation
+                affirmationBubble.classList.add('hidden');
+                
+                // Randomly show a new one
+                const randomIndex = Math.floor(Math.random() * affirmations.length);
+                const affirmation = affirmations[randomIndex];
+                affirmationBubble.querySelector('p').textContent = affirmation;
+                
+                // Show the bubble
+                affirmationBubble.classList.remove('hidden');
+
+                // Hide the bubble after 5 seconds
+                setTimeout(() => {
+                    affirmationBubble.classList.add('hidden');
+                }, 5000);
+            }
+
+            // Start the movement loop
+            setInterval(moveCharacter, 50);
+
+            // Add click event listener to the character
+            character.addEventListener('click', showAffirmation);
+        });
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #e0f2fe; /* Light blue background */
+            background-image: radial-gradient(circle at 10% 20%, rgba(22, 149, 169, 0.4) 0%, rgba(22, 149, 169, 0.2) 90%), url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" stroke="rgba(22, 149, 169, 0.1)" fill="none" stroke-width="2"/></svg>');
+            background-repeat: repeat;
+        }
+        .skill-circle {
+            transition: transform 0.3s ease-in-out, box-shadow 0.3s ease-in-out;
+        }
+        .skill-circle:hover {
+            transform: scale(1.05) translateY(-5px);
+            box-shadow: 0 15px 30px rgba(0, 0, 0, 0.15);
+        }
+        .bg-card {
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
+        }
+        .glass-btn {
+            background: rgba(255, 255, 255, 0.2);
+            backdrop-filter: blur(5px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+        .modal {
+            background: rgba(0, 0, 0, 0.6);
+        }
+        .modal-content {
+            background: #f0f9ff;
+        }
+        .progress-bar {
+            height: 100%;
+            transition: width 0.5s ease-in-out;
+        }
+        .toast {
+            animation-duration: 0.5s;
+        }
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+            }
+            to {
+                transform: translateX(0);
+            }
+        }
+        @keyframes slideOut {
+            from {
+                transform: translateX(0);
+            }
+            to {
+                transform: translateX(100%);
+            }
+        }
+        .animate-slide-in {
+            animation-name: slideIn;
+        }
+        .animate-slide-out {
+            animation-name: slideOut;
+        }
+
+        /* --- Updated Character CSS --- */
+        #character {
+            position: fixed;
+            font-size: 3rem;
+            cursor: pointer;
+            z-index: 10;
+            transition: transform 0.2s ease-in-out;
+        }
+        #character:hover {
+            transform: scale(1.1);
+        }
+
+        #affirmation-bubble {
+            position: fixed;
+            background-color: #fff;
+            border-radius: 1rem;
+            padding: 0.75rem 1rem;
+            max-width: 250px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            z-index: 9;
+            transition: opacity 0.5s ease-in-out;
+        }
+        /* Style for the speech bubble tail */
+        #affirmation-bubble::after {
+            content: '';
+            position: absolute;
+            bottom: -10px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 0;
+            height: 0;
+            border-left: 10px solid transparent;
+            border-right: 10px solid transparent;
+            border-top: 10px solid #fff;
+        }
+    </style>
+</head>
+<body class="min-h-screen p-4 flex flex-col items-center text-gray-800">
+
+    <!-- User ID Display -->
+    <div id="user-id-display" class="fixed top-4 left-4 text-xs text-gray-500"></div>
+
+    <!-- Main Game Header -->
+    <header class="w-full max-w-4xl p-6 mb-8 bg-card text-center">
+        <h1 class="text-4xl sm:text-5xl font-bold text-blue-800 mb-2 drop-shadow-md">DBT Skills Compass</h1>
+        <p class="text-xl text-blue-600 font-semibold">Your guide to building a life worth living.</p>
+    </header>
+
+    <!-- Game UI Container -->
+    <main class="flex flex-col lg:flex-row w-full max-w-6xl gap-8">
+
+        <!-- Skills Area -->
+        <div class="flex-1 p-6 bg-card flex flex-col justify-center items-center">
+            <h2 class="text-3xl font-bold mb-6 text-blue-800">Choose a Skill</h2>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-8 w-full max-w-2xl">
+                <!-- Mindfulness -->
+                <button id="mindfulness-btn" class="skill-circle bg-blue-500 hover:bg-blue-600 text-white font-extrabold text-2xl p-10 rounded-full flex flex-col items-center justify-center text-center shadow-lg">
+                    <span>Mindfulness</span>
+                    <span class="text-sm font-normal">Mindful awareness</span>
+                </button>
+                <!-- Distress Tolerance -->
+                <button id="distress-btn" class="skill-circle bg-red-500 hover:bg-red-600 text-white font-extrabold text-2xl p-10 rounded-full flex flex-col items-center justify-center text-center shadow-lg">
+                    <span>Distress Tolerance</span>
+                    <span class="text-sm font-normal">Surviving the crisis</span>
+                </button>
+                <!-- Emotion Regulation -->
+                <button id="emotion-btn" class="skill-circle bg-yellow-500 hover:bg-yellow-600 text-white font-extrabold text-2xl p-10 rounded-full flex flex-col items-center justify-center text-center shadow-lg">
+                    <span>Emotion Regulation</span>
+                    <span class="text-sm font-normal">Managing your feelings</span>
+                </button>
+                <!-- Interpersonal Effectiveness -->
+                <button id="interpersonal-btn" class="skill-circle bg-green-500 hover:bg-green-600 text-white font-extrabold text-2xl p-10 rounded-full flex flex-col items-center justify-center text-center shadow-lg">
+                    <span>Interpersonal Effectiveness</span>
+                    <span class="text-sm font-normal">Building relationships</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Gamification & Rewards Area -->
+        <div class="flex-1 flex flex-col gap-8">
+            <!-- Points & Progress -->
+            <div class="p-6 bg-card">
+                <h2 class="text-3xl font-bold mb-4 text-blue-800">Your Progress</h2>
+                <div class="flex items-center justify-between mb-2">
+                    <span class="font-semibold text-lg">Current Points:</span>
+                    <span id="points-display" class="font-extrabold text-2xl text-blue-600">0</span>
+                </div>
+                <div class="flex items-center justify-between mb-2">
+                    <span class="font-semibold text-lg">Total Points Scored:</span>
+                    <span id="total-points-display" class="font-extrabold text-2xl text-blue-600">0</span>
+                </div>
+            </div>
+
+            <!-- Custom Rewards -->
+            <div class="p-6 bg-card flex-1">
+                <h2 class="text-3xl font-bold mb-4 text-blue-800">Your Rewards</h2>
+                <div class="flex flex-col gap-2 mb-4">
+                    <input type="text" id="new-reward-input" placeholder="Add a reward (e.g., 'watch an episode')" class="flex-grow p-3 rounded-lg border-2 border-gray-300 focus:outline-none focus:border-blue-500">
+                    <input type="number" id="new-reward-cost" placeholder="Points cost" min="0" value="50" class="flex-grow p-3 rounded-lg border-2 border-gray-300 focus:outline-none focus:border-blue-500">
+                    <button id="add-reward-btn" class="px-6 py-3 bg-blue-500 hover:bg-blue-600 text-white font-bold rounded-lg transition-colors duration-200">Add</button>
+                </div>
+                <div class="max-h-64 overflow-y-auto">
+                    <ul id="rewards-list" class="space-y-2">
+                        <!-- Rewards will be dynamically inserted here -->
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Session Insights -->
+            <div class="p-6 bg-card">
+                <h2 class="text-3xl font-bold mb-4 text-blue-800">Session Insights</h2>
+                <p class="text-sm text-gray-500 mb-4">Average distress reduction for each skill and sub-skill.</p>
+                <div class="max-h-64 overflow-y-auto">
+                    <ul id="insights-list" class="space-y-4">
+                        <!-- Insights will be dynamically inserted here -->
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Character and Affirmation Bubble -->
+    <div id="character">&#x1F9A6;</div>
+    <div id="affirmation-bubble" class="hidden">
+        <p class="text-sm font-semibold text-gray-800"></p>
+    </div>
+
+    <!-- Modal for Skill Tips and Session Logging -->
+    <div id="skill-modal" class="modal fixed inset-0 z-50 flex items-center justify-center p-4 hidden">
+        <div class="modal-content relative w-full max-w-2xl mx-auto rounded-xl p-8 shadow-2xl border-4 border-blue-500">
+            <h3 id="modal-title" class="text-3xl font-extrabold text-center text-blue-800 mb-6 drop-shadow-sm">Modal Title</h3>
+            <div id="modal-content" class="text-lg text-gray-700 space-y-4 max-h-96 overflow-y-auto">
+                <!-- Content will be dynamically inserted here -->
+            </div>
+            <div class="mt-8 flex justify-center gap-4">
+                <button id="close-modal-btn" class="glass-btn px-6 py-3 text-blue-700 font-bold rounded-full text-lg shadow-lg">Got it</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Points Toast -->
+    <div id="points-toast" class="hidden fixed bottom-4 right-4 bg-green-500 text-white font-bold py-3 px-6 rounded-full shadow-lg transition-transform duration-500 ease-out toast z-50">
+        +10 Points! Good job!
+    </div>
+
+</body>
+</html>

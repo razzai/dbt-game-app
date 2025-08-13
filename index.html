@@ -181,6 +181,19 @@
                         <!-- Insights will be dynamically inserted here -->
                     </ul>
                 </div>
+
+                <div class="mt-8">
+                    <h3 class="text-2xl font-bold mb-4 text-blue-800">Session History</h3>
+                    <div class="flex items-center mb-4">
+                        <input type="text" id="insights-search-input" placeholder="Search by date (e.g., Aug 12, 2025)" class="flex-grow p-3 rounded-lg border-2 border-gray-300 focus:outline-none focus:border-blue-500">
+                        <button id="insights-search-clear" class="ml-2 px-4 py-3 bg-gray-300 hover:bg-gray-400 rounded-lg text-gray-800 font-bold transition-colors duration-200">Clear</button>
+                    </div>
+                    <div class="max-h-64 overflow-y-auto">
+                        <ul id="session-history-list" class="space-y-2">
+                            <!-- Session history will be dynamically inserted here -->
+                        </ul>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -265,6 +278,7 @@
             });
 
             renderAnalytics();
+            renderSessionHistory();
         };
 
         const addPoints = (points) => {
@@ -272,6 +286,7 @@
             gameData.totalPointsScored += points;
             saveData();
             showPointsToast(points);
+            updateUI(); // Refresh UI after adding points
         };
 
         const addReward = (rewardText, cost) => {
@@ -279,6 +294,7 @@
             if (rewardText.trim() !== '' && !isNaN(parsedCost) && parsedCost >= 0) {
                 gameData.rewards.push({ text: rewardText, cost: parsedCost });
                 saveData();
+                updateUI(); // Refresh UI after adding a reward
             } else {
                 createCustomAlert("Please enter a valid reward and a non-negative point cost.");
             }
@@ -290,6 +306,7 @@
                 gameData.points -= reward.cost;
                 saveData();
                 showModal('You redeemed a reward!', `You just redeemed: "${reward.text}". Enjoy your moment of self-care!`);
+                updateUI(); // Refresh UI after redeeming a reward
             } else {
                 createCustomAlert(`You need ${reward.cost} points to redeem "${reward.text}". You only have ${gameData.points} points.`);
             }
@@ -368,6 +385,49 @@
             }
         };
 
+        const renderSessionHistory = (searchQuery = '') => {
+            const historyContainer = document.getElementById('session-history-list');
+            historyContainer.innerHTML = '';
+            
+            const sessionsToRender = gameData.sessions.filter(session => {
+                const date = new Date(session.timestamp);
+                const dateString = date.toLocaleDateString('en-US', {
+                    year: 'numeric', month: 'short', day: 'numeric'
+                }).toLowerCase();
+                const timeString = date.toLocaleTimeString('en-US', {
+                    hour: '2-digit', minute: '2-digit'
+                }).toLowerCase();
+                const searchLower = searchQuery.toLowerCase();
+                return dateString.includes(searchLower) || timeString.includes(searchLower);
+            }).sort((a, b) => b.timestamp - a.timestamp); // Sort by newest first
+
+            if (sessionsToRender.length === 0) {
+                historyContainer.innerHTML = `<li class="text-center text-gray-500">No sessions found matching your search.</li>`;
+                return;
+            }
+
+            sessionsToRender.forEach(session => {
+                const date = new Date(session.timestamp);
+                const dateString = date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+                const timeString = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+                const skillName = skillsData[session.skill].title;
+                const subSkillName = skillsData[session.skill].subSkills[session.subSkill].name;
+
+                const li = document.createElement('li');
+                li.className = 'bg-white bg-opacity-20 backdrop-blur-sm rounded-lg p-2 flex justify-between items-center';
+                li.innerHTML = `
+                    <div class="flex-1">
+                        <div class="font-bold text-gray-800">${dateString} at ${timeString}</div>
+                        <div class="text-sm text-gray-600">Used **${subSkillName}** (${skillName})</div>
+                    </div>
+                    <div class="text-lg font-bold text-blue-600">
+                        Distress Change: ${session.change > 0 ? '+' : ''}${session.change}
+                    </div>
+                `;
+                historyContainer.appendChild(li);
+            });
+        };
+
         // --- UI Modal functions ---
         let modal, modalTitle, modalContent, closeBtn;
         let beforeRating = null;
@@ -396,8 +456,8 @@
 
             modalContent.querySelectorAll('.sub-skill-btn').forEach(btn => {
                 btn.addEventListener('click', (e) => {
-                    const selectedSkillId = e.target.dataset.skill-id;
-                    const selectedSubSkillId = e.target.dataset.subskill-id;
+                    const selectedSkillId = e.target.dataset.skillId;
+                    const selectedSubSkillId = e.target.dataset.subskillId;
                     promptBeforeRating(selectedSkillId, selectedSubSkillId);
                 });
             });
@@ -542,6 +602,17 @@
             if (closeBtn) {
                  closeBtn.addEventListener('click', () => modal.classList.add('hidden'));
             }
+
+            // Event listeners for search and clear buttons
+            document.getElementById('insights-search-input').addEventListener('keyup', (e) => {
+                renderSessionHistory(e.target.value);
+            });
+            document.getElementById('insights-search-clear').addEventListener('click', () => {
+                const searchInput = document.getElementById('insights-search-input');
+                searchInput.value = '';
+                renderSessionHistory('');
+            });
+
 
             // --- Updated Code for the Character and Affirmations ---
             const character = document.getElementById('character');

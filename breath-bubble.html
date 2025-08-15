@@ -1,1 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Breath Bubble</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #e0f2fe;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            text-align: center;
+            padding: 2rem;
+        }
+        .card {
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.1);
+            padding: 2rem;
+            max-width: 600px;
+            width: 100%;
+        }
+        .bubble {
+            width: 50px;
+            height: 50px;
+            background-color: #00a2ff;
+            border-radius: 50%;
+            transition: all 4s ease-in-out;
+            margin: 2rem auto;
+        }
+        .bubble.breathe-in {
+            transform: scale(2.5);
+        }
+        .bubble.breathe-out {
+            transform: scale(1);
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1 class="text-4xl font-bold text-blue-800 mb-4">Mindful Breathing</h1>
+        <p class="text-lg text-gray-700 mb-8">Breathe in as the bubble expands. Breathe out as it shrinks. Do this 3 times.</p>
+        
+        <div class="min-h-[150px] flex flex-col justify-center items-center">
+            <div id="bubble" class="bubble"></div>
+            <p id="message" class="text-xl font-semibold text-gray-800"></p>
+        </div>
+        
+        <button id="finish-game-btn" class="mt-8 bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-8 rounded-full transition-colors duration-200 hidden">Finish and Earn Points!</button>
+    </div>
 
+    <script>
+        const pointsToAward = 50; // Points awarded for completing the game
+        const bubble = document.getElementById('bubble');
+        const messageEl = document.getElementById('message');
+        const finishBtn = document.getElementById('finish-game-btn');
+        let breathCount = 0;
+
+        // Function to start the breathing animation
+        function startBreathing() {
+            if (breathCount < 3) {
+                messageEl.textContent = "Breathe In...";
+                bubble.classList.add('breathe-in');
+                bubble.classList.remove('breathe-out');
+                
+                setTimeout(() => {
+                    messageEl.textContent = "Breathe Out...";
+                    bubble.classList.add('breathe-out');
+                    bubble.classList.remove('breathe-in');
+                    breathCount++;
+                    setTimeout(startBreathing, 4000);
+                }, 4000);
+            } else {
+                messageEl.textContent = "Great job! You completed the exercise.";
+                finishBtn.classList.remove('hidden');
+            }
+        }
+        
+        // Function to handle game completion and point transfer
+        function finishGame() {
+            localStorage.setItem('gamePointsToAdd', pointsToAward);
+            window.location.href = 'index.html';
+        }
+
+        // Add event listener to the finish button
+        finishBtn.addEventListener('click', finishGame);
+        
+        // Start the game after a short delay
+        setTimeout(startBreathing, 1000);
+    </script>
+</body>
+</html>

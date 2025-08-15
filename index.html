@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DBT Skills Compass</title>
+    <link rel="manifest" href="manifest.json">
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
@@ -74,9 +75,16 @@
             cursor: pointer;
             z-index: 10;
             transition: transform 0.2s ease-in-out;
+            transform-origin: center;
+            animation: walk 1s infinite alternate;
         }
         #character:hover {
             transform: scale(1.1);
+        }
+        
+        @keyframes walk {
+            from { transform: translateY(0); }
+            to { transform: translateY(-5px); }
         }
 
         #affirmation-bubble {
@@ -200,7 +208,7 @@
     </main>
 
     <!-- Character and Affirmation Bubble -->
-    <div id="character">&#x1F9A6;</div>
+    <div id="character">&#x1F6B6;</div>
     <div id="affirmation-bubble" class="hidden">
         <p class="text-sm font-semibold text-gray-800"></p>
     </div>
@@ -224,6 +232,20 @@
     </div>
 
     <script>
+        // Check for service worker support
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/service-worker.js')
+                    .then(registration => {
+                        console.log('Service Worker registered! Scope:', registration.scope);
+                    })
+                    .catch(err => {
+                        console.log('Service Worker registration failed:', err);
+                    });
+            });
+        }
+
+
         // --- Data Persistence using localStorage ---
         let gameData = {
             points: 0,
@@ -618,18 +640,114 @@
             const character = document.getElementById('character');
             const affirmationBubble = document.getElementById('affirmation-bubble');
             const affirmations = [
-                "It's okay to need quiet time to recharge.",
-                "Your unique way of thinking is a superpower.",
-                "A special interest is a beautiful thing to have.",
-                "Sensory needs are valid and deserve to be met.",
-                "It's okay to stim. Your body is just trying to find comfort.",
-                "Executive dysfunction is a challenge, not a moral failing.",
-                "Your brain processes information differently, and that's wonderful."
+                "I am in charge of my own happiness.",
+                "I am capable of achieving my goals.",
+                "My past does not define my future.",
+                "I am worthy of love and respect.",
+                "Every day is a new opportunity to grow.",
+                "I trust myself to make the right decisions.",
+                "I am exactly where I need to be right now.",
+                "I am enough, just as I am.",
+                "My potential to succeed is limitless.",
+                "I choose to be positive and optimistic.",
+                "Challenges help me grow and become stronger.",
+                "I am grateful for all the good in my life.",
+                "I radiate confidence and inner strength.",
+                "My body is a vessel of strength and vitality.",
+                "I am resilient and can overcome any obstacle.",
+                "I attract positivity and abundance.",
+                "I am deserving of all the good things that come to me.",
+                "My thoughts are powerful and create my reality.",
+                "I let go of what I cannot control.",
+                "I am a magnet for success and prosperity.",
+                "I have the power to create the life I desire.",
+                "I am proud of my progress and accomplishments.",
+                "I am beautiful from the inside out.",
+                "I release all fear and anxiety.",
+                "I forgive myself for my mistakes.",
+                "I am an unstoppable force of nature.",
+                "I am a beacon of light and hope.",
+                "I am healing and becoming stronger every day.",
+                "I am open to new possibilities.",
+                "I am courageous and full of bravery.",
+                "I am at peace with my past.",
+                "I have the strength to change my narrative.",
+                "I am filled with kindness and compassion.",
+                "My mind is calm and my spirit is bright.",
+                "I am the author of my own story.",
+                "I am surrounded by people who love and support me.",
+                "I am a creative and intelligent being.",
+                "I am capable of deep and meaningful connections.",
+                "I am financially stable and prosperous.",
+                "I am a valuable and important person.",
+                "I am in tune with my emotions.",
+                "I am capable of handling any situation.",
+                "I am a confident speaker and listener.",
+                "I am a source of inspiration for others.",
+                "I am living my life with purpose.",
+                "I am a powerful co-creator of my life.",
+                "I am at ease and flowing with life.",
+                "I am healthy, wealthy, and wise.",
+                "I am a person of great integrity.",
+                "I am doing the best that I can.",
+                "I am learning and growing from every experience.",
+                "I am a person of worth and value.",
+                "I am thankful for my journey.",
+                "I am a master of my own destiny.",
+                "I am thriving in all aspects of my life.",
+                "I am surrounded by love and positive energy.",
+                "I am a peaceful and centered individual.",
+                "I am grateful for this moment.",
+                "I am safe and protected.",
+                "I am a powerful problem-solver.",
+                "I am a force for good in the world.",
+                "I am fully capable and ready for change.",
+                "I am an embodiment of grace.",
+                "I am becoming a better version of myself.",
+                "I am living a life of my dreams.",
+                "I am filled with hope and optimism.",
+                "I am kind to myself and others.",
+                "I am strong enough to face anything.",
+                "I am a successful person.",
+                "I am open to receiving all good things.",
+                "I am in harmony with the universe.",
+                "I am building a beautiful future.",
+                "I am a positive influence.",
+                "I am embracing my authentic self.",
+                "I am a person of great potential.",
+                "I am free from judgment.",
+                "I am connected to my inner wisdom.",
+                "I am a champion of my own life.",
+                "I am confident in my abilities.",
+                "I am a positive person.",
+                "I am surrounded by beauty.",
+                "I am calm and composed under pressure.",
+                "I am a visionary and an innovator.",
+                "I am grateful for my challenges.",
+                "I am a creative genius.",
+                "I am at peace with myself.",
+                "I am a person of true greatness.",
+                "I am a kind and compassionate soul.",
+                "I am creating my own luck.",
+                "I am a source of joy for others.",
+                "I am filled with endless energy.",
+                "I am living in the present moment.",
+                "I am in perfect health.",
+                "I am a true survivor.",
+                "I am a work in progress.",
+                "I am a winner.",
+                "I am capable of great things.",
+                "I am beautiful and strong.",
+                "I am creating a life I love.",
+                "I am a person of honor.",
+                "I am a joyful soul.",
+                "I am thriving."
             ];
 
             let x = Math.random() * (window.innerWidth - character.clientWidth);
             let dx = 2; // Initial direction x
             const speed = 2;
+            let facingRight = true;
 
             function moveCharacter() {
                 if (!character) return;
@@ -643,9 +761,20 @@
                 // Update horizontal position
                 x += dx * speed;
 
-                // Bounce off walls
-                if (x <= 0 || x >= maxX) {
-                    dx *= -1;
+                // Bounce off walls and flip direction
+                if (x <= 0) {
+                    dx = 2;
+                    facingRight = true;
+                } else if (x >= maxX) {
+                    dx = -2;
+                    facingRight = false;
+                }
+
+                // Flip the character based on direction
+                if(facingRight) {
+                    character.style.transform = 'scaleX(1)';
+                } else {
+                    character.style.transform = 'scaleX(-1)';
                 }
 
                 // Update character's CSS
